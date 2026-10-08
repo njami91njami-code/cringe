@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cringe Count</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Inter:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            overflow: hidden; /* Prevent scroll from floating animations */
+        }
+        
+        h1 {
+            font-family: 'Fredoka One', cursive;
+        }
+
+        .cringe-btn {
+            transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.1s;
+        }
+        
+        .cringe-btn:active {
+            transform: scale(0.95);
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.8);
+        }
+
+        /* Animation for the counter updating */
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); color: #ef4444; }
+            100% { transform: scale(1); }
+        }
+        
+        .animate-pop {
+            animation: pop 0.3s ease-out;
+        }
+
+        /* Floating text animation for clicks */
+        @keyframes float-up {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-100px) scale(1.5); }
+        }
+        
+        .floating-text {
+            position: absolute;
+            pointer-events: none;
+            font-weight: bold;
+            font-size: 1.5rem;
+            color: #ef4444;
+            animation: float-up 1s ease-out forwards;
+            z-index: 50;
+            text-shadow: 0px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        /* Background grid for a subtle cool effect */
+        .bg-grid {
+            background-size: 40px 40px;
+            background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                              linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col items-center justify-center relative select-none">
+    
+    <div class="bg-grid"></div>
+
+    <div class="text-center z-10 px-4 w-full max-w-2xl">
+        <div class="text-6xl mb-2">😬</div>
+        <h1 class="text-5xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-orange-500 mb-2 filter drop-shadow-lg">
+            CRINGE COUNT
+        </h1>
+        <p class="text-slate-400 text-lg md:text-xl mb-12 italic">
+            
+        </p>
+
+        <div class="bg-slate-800/80 backdrop-blur-sm border border-slate-700 rounded-3xl p-8 md:p-12 shadow-2xl mb-12 relative overflow-hidden">
+            <!-- Decorative blur blob -->
+            <div class="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 bg-red-500/20 rounded-full blur-3xl"></div>
+            
+            <div class="text-slate-400 text-sm uppercase tracking-widest font-bold mb-4"> </div>
+            
+            <div id="loading" class="text-3xl text-slate-500 animate-pulse font-mono">Loading...</div>
+            
+            <div id="counter" class="text-8xl md:text-9xl font-black text-white hidden font-mono tabular-nums tracking-tighter" style="text-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+                0
+            </div>
+        </div>
+
+        <button id="cringeBtn" class="cringe-btn group relative inline-flex items-center justify-center px-8 py-5 text-2xl font-bold text-white transition-all duration-200 bg-red-600 font-bold rounded-2xl hover:bg-red-500 focus:outline-none focus:ring-4 focus:ring-red-600/50 shadow-[0_8px_0_rgb(153,27,27)] hover:shadow-[0_6px_0_rgb(153,27,27)] hover:translate-y-[2px] active:shadow-[0_0px_0_rgb(153,27,27)] active:translate-y-[8px] w-full max-w-md mx-auto disabled:opacity-50 disabled:cursor-not-allowed">
+            <span class="mr-3 text-3xl group-hover:animate-bounce">🤦‍♂️</span> 
+            ADD CRINGE
+        </button>
+        
+        <div class="mt-8 text-sm text-slate-500 flex items-center justify-center gap-2">
+            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span id="connection-status">Connecting to live count...</span>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Environment variables provided by the platform
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'cringe-count-default';
+        let firebaseConfig = {};
+        let initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                firebaseConfig = JSON.parse(__firebase_config);
+            }
+        } catch (e) {
+            console.error("Error parsing firebase config:", e);
+        }
+
+        // UI Elements
+        const counterEl = document.getElementById('counter');
+        const loadingEl = document.getElementById('loading');
+        const btn = document.getElementById('cringeBtn');
+        const statusEl = document.getElementById('connection-status');
+        
+        let localCount = 0;
+        let isInitialized = false;
+
+        // Fallback for missing config (local mode)
+        if (!firebaseConfig.projectId) {
+            console.warn("No Firebase configuration found. Running in local-only mode.");
+            loadingEl.classList.add('hidden');
+            counterEl.classList.remove('hidden');
+            statusEl.textContent = "Local offline mode";
+            statusEl.previousElementSibling.classList.replace('bg-green-500', 'bg-yellow-500');
+            
+            btn.addEventListener('click', (e) => {
+                localCount++;
+                updateCounterUI(localCount);
+                createFloatingText(e);
+            });
+        } else {
+            const app = initializeApp(firebaseConfig);
+            const db = getFirestore(app);
+            const auth = getAuth(app);
+
+            // Document reference following STRICT RULE 1
+            const counterDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'counters', 'global_cringe_count');
+
+            // Authenticate before querying
+            const authenticate = async () => {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Authentication failed:", error);
+                    statusEl.textContent = "Auth failed. Read-only mode.";
+                    statusEl.previousElementSibling.classList.replace('bg-green-500', 'bg-red-500');
+                }
+            };
+
+            // Listen to auth state to start data subscription
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    setupRealtimeListener();
+                }
+            });
+
+            const setupRealtimeListener = () => {
+                // Subscribe to the document
+                onSnapshot(counterDocRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        localCount = data.count || 0;
+                    } else {
+                        // Document doesn't exist yet, initialize it locally but don't force write until clicked
+                        localCount = 0;
+                    }
+                    
+                    if (!isInitialized) {
+                        loadingEl.classList.add('hidden');
+                        counterEl.classList.remove('hidden');
+                        statusEl.textContent = "Live sync active";
+                        isInitialized = true;
+                    }
+                    
+                    updateCounterUI(localCount);
+                }, (error) => {
+                    console.error("Error listening to count:", error);
+                    statusEl.textContent = "Disconnected from live sync";
+                    statusEl.previousElementSibling.classList.replace('bg-green-500', 'bg-red-500');
+                });
+            };
+
+            btn.addEventListener('click', async (e) => {
+                // Visual feedback immediately
+                localCount++;
+                updateCounterUI(localCount);
+                createFloatingText(e);
+
+                if (!auth.currentUser) return; // Guard clause
+
+                try {
+                    // Use setDoc with merge and increment to handle both creation and atomic updates
+                    await setDoc(counterDocRef, {
+                        count: increment(1)
+                    }, { merge: true });
+                } catch (error) {
+                    console.error("Error updating cringe count:", error);
+                    // Revert visual change on error
+                    localCount--;
+                    updateCounterUI(localCount);
+                }
+            });
+
+            // Start authentication flow
+            authenticate();
+        }
+
+        // Helper function to update the counter UI with animation
+        let popTimeout;
+        function updateCounterUI(val) {
+            if (counterEl.textContent !== val.toString()) {
+                counterEl.textContent = val.toLocaleString();
+                
+                // Trigger pop animation
+                counterEl.classList.remove('animate-pop');
+                void counterEl.offsetWidth; // Trigger reflow
+                counterEl.classList.add('animate-pop');
+                
+                // Haptic feedback if available on mobile
+                if (navigator.vibrate) {
+                    navigator.vibrate(50);
+                }
+            }
+        }
+
+        // Helper function for floating click effects
+        function createFloatingText(e) {
+            const el = document.createElement('div');
+            el.className = 'floating-text';
+            el.textContent = '+1 😬';
+            
+            // Get click coordinates, or default to center of button if triggered by keyboard
+            let x, y;
+            if (e.clientX && e.clientY) {
+                x = e.clientX;
+                y = e.clientY;
+            } else {
+                const rect = btn.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.top + rect.height / 2;
+            }
+
+            // Randomize position slightly
+            const xOffset = (Math.random() - 0.5) * 40;
+            
+            el.style.left = `${x + xOffset}px`;
+            el.style.top = `${y - 20}px`;
+            
+            document.body.appendChild(el);
+            
+            // Cleanup
+            setTimeout(() => {
+                el.remove();
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
